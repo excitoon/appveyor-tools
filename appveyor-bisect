@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import subprocess
+import time
+
+import requests
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('path', type=str, help='path to git working tree')
+parser.add_argument('account', type=str, help='account')
+parser.add_argument('project', type=str, help='project')
+parser.add_argument('branch', type=str, help='branch')
+parser.add_argument('start', type=str, help='start commit')
+parser.add_argument('end', type=str, help='end commit')
+parser.add_argument('token', type=str, help='token')
+args = parser.parse_args()
+
+assert os.path.isdir(args.path)
+
+process = subprocess.run(['git', 'rev-list', '{}^..{}'.format(args.start, args.end)], cwd=args.path, stdout=subprocess.PIPE, universal_newlines=True)
+process.check_returncode()
+
+commits = process.stdout.splitlines()[::-1]
+assert len(commits) > 1
+
+def wait(args, build_id):
+    headers = {
+        'Authorization' : 'Bearer {}'.format(args.token)
+    }
+    while True:
+        time.sleep(30)
+        result = requests.get('https://ci.appveyor.com/api/projects/{}/{}/history?recordsNumber=1&startBuildId={}'.format(args.account, args.project, build_id+1), headers=headers)
+        assert result.status_code == 200
+        history = result.json()
+        assert len(history['builds']) == 1
+        assert history['builds'][0]['buildId'] == build_id
+        if history['builds'][0]['status'] == 'success':
+            return True
+        elif history['builds'][0]['status'] == 'failed':
+            return False
+        assert history['builds'][0]['status'] != 'cancelled'
+
+def works(args, commits, commit):
+    headers = {
+        'Authorization' : 'Bearer {}'.format(args.token)
+    }
+    params = {
+        'accountName' : args.account,
+        'projectSlug' : args.project,
+        'branch' : args.branch,
+        'commitId' : commit
+    }
+    result = requests.post('https://ci.appveyor.com/api/builds', headers=headers, json=params)
+    assert result.status_code == 200
+    build_info = result.json()
+    print('Checking commit {} by {} ({} remaining)'.format(commit, build_info['authorName'], len(commits)-1))
+    print(build_info['message'])
+    print(build_info['messageExtended'])
+    print()
+    return wait(args, build_info['buildId'])
+
+assert works(args, commits, commits[0]) == True
+commits = commits[1:]
+assert works(args, commits, commits[-1]) == False
+
+first_fail = commits[-1]
+commits = commits[:-1]
+while commits != []:
+    commit = commits[len(commits) // 2]
+    if works(args, commits, commit):
+        commits = commits[len(commits) // 2 + 1:]
+    else:
+        first_fail = commit
+        commits = commits[:len(commits) // 2]
+
+print('Bad commit: {}'.format(first_fail))
