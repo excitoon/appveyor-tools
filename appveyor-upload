@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+
+import requests
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('path', type=str, help='path to appveyor.yml')
+parser.add_argument('account', type=str, help='account')
+parser.add_argument('project', type=str, help='project')
+parser.add_argument('token', type=str, help='token')
+args = parser.parse_args()
+
+assert os.path.isfile(args.path)
+with open(args.path) as yml_file:
+    data = yml_file.read()
+
+headers = {
+    'Authorization' : 'Bearer {}'.format(args.token)
+}
+
+result = requests.put('https://ci.appveyor.com/api/projects/{}/{}/settings/yaml'.format(args.account, args.project), headers=headers, data=data)
+assert result.status_code == 204
